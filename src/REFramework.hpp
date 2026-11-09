@@ -170,7 +170,6 @@ private:
     void save_config();
     void consume_input();
     void init_fonts();
-    void invalidate_device_objects();
 
     void draw_ui();
     void draw_about();
@@ -210,7 +209,6 @@ private:
     
     // UI
     bool m_has_frame{false};
-    bool m_wants_device_object_cleanup{false};
     bool m_wants_save_config{false};
     std::atomic<bool> m_wants_save_imgui_config{false};
     bool m_draw_ui{true};

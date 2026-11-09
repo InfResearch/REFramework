@@ -950,7 +950,6 @@ void REFramework::on_frame_d3d11() {
     if (!m_has_frame) {
         if (!is_init_ok) {
             init_fonts();
-            invalidate_device_objects();
 
             ImGui_ImplDX11_NewFrame();
             // hooks don't run until after initialization, so we just render the imgui window while initalizing.
@@ -959,7 +958,6 @@ void REFramework::on_frame_d3d11() {
             return;
         }
     } else {
-        invalidate_device_objects();
         ImGui_ImplDX11_NewFrame();
     }
 
@@ -1057,13 +1055,9 @@ void REFramework::on_frame_d3d12() {
 
     auto do_per_frame_thing = [&]() {
         ImGui::GetIO().BackendRendererUserData = m_d3d12.imgui_backend_datas[0];
-        const auto prev_cleanup = m_wants_device_object_cleanup;
-        invalidate_device_objects();
         ImGui_ImplDX12_NewFrame();
 
         ImGui::GetIO().BackendRendererUserData = m_d3d12.imgui_backend_datas[1];
-        m_wants_device_object_cleanup = prev_cleanup;
-        invalidate_device_objects();
         ImGui_ImplDX12_NewFrame();
     };
 
@@ -1674,21 +1668,10 @@ void REFramework::init_fonts() {
         loaded_fonts["ICON"] = fonts->AddFontFromMemoryTTF((void*)af_faprolight_ptr, af_faprolight_size, m_font_size, &custom_icons, icon_ranges);
     }*/
 
-    m_wants_device_object_cleanup = true;
-}
-
-void REFramework::invalidate_device_objects() {
-    if (!m_wants_device_object_cleanup) {
-        return;
-    }
-
-    if (m_renderer_type == RendererType::D3D11) {
-        ImGui_ImplDX11_InvalidateDeviceObjects();
-    } else if (m_renderer_type == RendererType::D3D12) {
-        ImGui_ImplDX12_InvalidateDeviceObjects();
-    }
-
-    m_wants_device_object_cleanup = false;
+    // ImGui's dynamic atlas queues texture creation/updates for RenderDrawData.
+    // Invalidating device objects in Present would destroy textures referenced
+    // by draw data already produced by run_imgui_frame. Their TexID stays zero
+    // until the next ImGui::NewFrame, making the current D3D12 descriptor invalid.
 }
 
 void REFramework::ensure_ui_layout_baseline() {
