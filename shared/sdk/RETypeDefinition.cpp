@@ -362,6 +362,15 @@ sdk::RETypeDefinition* RETypeDefinition::get_parent_type() const {
 
 uint32_t RETypeDefinition::get_element_typeid() const {
     const auto ver = sdk::GameIdentity::get().tdb_ver();
+    if (ver == 67 && sdk::GameIdentity::get().is_dmc5()) {
+        // 142565B70 / 142567EA0: array element identity is the upper17 bits
+        // of the qword at +0x10, not absent merely because this is pre-TDB69.
+        if (TDEF_FIELD(this, object_type) == 2) {
+            return static_cast<uint32_t>(*reinterpret_cast<const uint64_t*>(
+                reinterpret_cast<const uint8_t*>(this) + 0x10) >> 47);
+        }
+        return 0;
+    }
     if (ver >= 71) {
         return (uint32_t)reinterpret_cast<const sdk::RETypeDefVersion84*>(this)->element_typeid_TBD;
     } else if (ver >= 69) {
@@ -600,6 +609,14 @@ std::vector<sdk::RETypeDefinition*> RETypeDefinition::get_generic_argument_types
 
     const auto generics = get_generic_data();
 
+    if (sdk::GameIdentity::get().is_dmc5() && sdk::GameIdentity::get().tdb_ver() == 67
+        && is_generic_type_definition()) {
+        // A generic parameter is (owner, position), not a TDB type. Preserve
+        // arity in this old pointer API without inventing types from name offsets.
+        out.resize(sdk::generic_list_accessor::get_num(generics), nullptr);
+        return out;
+    }
+
     if (generics != nullptr && sdk::generic_list_accessor::get_num(generics) > 0) {
         const auto tdb = sdk::RETypeDB::get();
 
@@ -615,6 +632,31 @@ std::vector<sdk::RETypeDefinition*> RETypeDefinition::get_generic_argument_types
         }
     }
 
+    return out;
+}
+
+std::vector<GenericParameterInfo> RETypeDefinition::get_generic_parameters() const {
+    std::vector<GenericParameterInfo> out;
+    if (!sdk::GameIdentity::get().is_dmc5() || sdk::GameIdentity::get().tdb_ver() != 67
+        || !is_generic_type_definition()) {
+        return out;
+    }
+    const auto tdb = sdk::RETypeDB::get();
+    const auto offset = static_cast<uint32_t>(TDEF_FIELD(this, generics));
+    const auto gd = get_generic_data();
+    const auto count = sdk::generic_list_accessor::get_num(gd);
+    if (uint64_t{offset} + 4 + uint64_t{count} * 8 > tdb->get_byte_pool_size()) {
+        throw std::runtime_error("DMC5 generic parameter descriptors exceed the TDB byte pool");
+    }
+    const auto words = reinterpret_cast<const uint32_t*>(gd) + 1;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto packed = words[2 * i];
+        const auto name_offset = words[2 * i + 1];
+        if ((packed & 0x1ffff) >= tdb->get_num_types() || name_offset >= tdb->get_string_pool_size()) {
+            throw std::runtime_error("Invalid DMC5 generic parameter reference");
+        }
+        out.push_back({i, packed & 0x1ffff, packed >> 17, name_offset, packed, tdb->get_string(name_offset)});
+    }
     return out;
 }
 

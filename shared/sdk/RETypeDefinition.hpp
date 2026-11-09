@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -31,6 +32,18 @@ struct REMethodDefinition;
 struct REProperty;
 struct RETypeDefinition;
 struct GenericListData;
+
+// DMC5/TDB67 definition parameters are 8-byte descriptors, not type IDs.
+// Original readers: 1425663E0 (constraint), 142567D80 (attributes),
+// 142567EA0 (name), PE SHA256 1b881b52...18e1d.
+struct GenericParameterInfo {
+    uint32_t position{};
+    uint32_t constraint_typeid{}; // zero means no constraint
+    uint32_t attributes{};
+    uint32_t name_offset{};
+    uint32_t raw_descriptor{};
+    std::string name;
+};
 
 // ============================================================================
 // TDB 84 (PRAGMATA) — TYPE_INDEX_BITS=19, FIELD_BITS=20
@@ -594,6 +607,7 @@ struct RETypeDefinition {
     sdk::REMethodDefinition* get_method(std::string_view name) const;
     std::vector<sdk::REMethodDefinition*> get_methods(std::string_view name) const;
     std::vector<sdk::RETypeDefinition*> get_generic_argument_types() const;
+    std::vector<GenericParameterInfo> get_generic_parameters() const;
     sdk::GenericListData* get_generic_data() const;
 
     uint32_t get_element_typeid() const;

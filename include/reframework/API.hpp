@@ -434,15 +434,20 @@ public:
             std::string buffer{};
             buffer.resize(512);
 
-            uint32_t real_size{0};
-            auto result = fn(*this, &buffer[0], buffer.size(), &real_size);
-
-            if (result != REFRAMEWORK_ERROR_NONE) {
-                return "";
+            for (;;) {
+                uint32_t real_size{0};
+                const auto result = fn(*this, buffer.data(), static_cast<uint32_t>(buffer.size()), &real_size);
+                if (result == REFRAMEWORK_ERROR_NONE) {
+                    if (real_size > buffer.size()) return "";
+                    buffer.resize(real_size);
+                    return buffer;
+                }
+                if (result != REFRAMEWORK_ERROR_OUT_TOO_SMALL || buffer.size() >= 1024 * 1024) {
+                    return "";
+                }
+                // Older providers do not set out_len on OUT_TOO_SMALL.
+                buffer.resize(buffer.size() * 2);
             }
-
-            buffer.resize(real_size);
-            return buffer;
         }
 
         bool has_fieldptr_offset() const {

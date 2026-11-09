@@ -4,6 +4,8 @@
 #include <deque>
 #include <algorithm>
 #include <regex>
+#include <cmath>
+#include <cstring>
 #include <json.hpp>
 
 #include <windows.h>
@@ -1323,6 +1325,9 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
         type_entry["name_hierarchy"] = t.get_name_hierarchy();
         type_entry["is_generic_type"] = t.is_generic_type();
         type_entry["is_generic_type_definition"] = t.is_generic_type_definition();
+        type_entry["flags_raw"] = t.get_flags();
+        type_entry["parent_typeid"] = parent_tid;
+        type_entry["declaring_typeid"] = declaring_tid;
 
         if (auto declaring_type = t.get_declaring_type(); declaring_type != nullptr) {
             type_entry["declaring_type"] = declaring_type->get_full_name();
@@ -1330,6 +1335,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
 
         {
             const auto elem_tid = tdef->get_element_typeid();
+            type_entry["element_typeid"] = elem_tid;
             if (elem_tid != 0) {
                 type_entry["element_type_name"] = init_type(il2cpp_dump, tdb, elem_tid)->full_name;
             }
@@ -1337,9 +1343,19 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
 
         if (auto gtd = t.get_generic_type_definition(); gtd != nullptr) {
             type_entry["generic_type_definition"] = gtd->get_full_name();
+            type_entry["generic_definition_typeid"] = gtd->get_index();
         }
 
-        const auto generics = t.get_generic_argument_types();
+        const auto definition_parameters = t.get_generic_parameters();
+        for (const auto& gp : definition_parameters) {
+            type_entry["generic_parameters"].push_back({
+                {"position", gp.position}, {"name", gp.name}, {"name_offset", gp.name_offset},
+                {"attributes_raw", gp.attributes}, {"constraint_typeid", gp.constraint_typeid},
+                {"raw_descriptor", gp.raw_descriptor}
+            });
+        }
+        const auto generics = definition_parameters.empty()
+            ? t.get_generic_argument_types() : std::vector<sdk::RETypeDefinition*>{};
 
         if (!generics.empty()) {
             for (auto gt : generics) {
@@ -1484,6 +1500,9 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
         auto& method_entry = type_entry["methods"][pm->name + std::to_string(i)];
 
         method_entry["id"] = i;
+        method_entry["declaring_typeid"] = type_id;
+        method_entry["flags_raw"] = method_flags;
+        method_entry["impl_flags_raw"] = impl_flags;
         method_entry["function"] = (std::stringstream{} << std::hex << get_original_va(m.get_function())).str();
 
         if (auto impl_flags_str = get_full_enum_value_name("via.clr.MethodImplFlag", impl_flags); !impl_flags_str.empty()) {
@@ -1560,6 +1579,9 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
 
             auto param_entry = json{
                 {"type", pdesc->type->full_name},
+                {"typeid", param_type_id},
+                {"flags_raw", flags},
+                {"modifier_raw", modifier},
                 {"name", pdesc->name},
             };
 
@@ -1585,6 +1607,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
         } else {
             method_entry["returns"] = json{
                 {"type", return_type_name},
+                {"typeid", return_type != nullptr ? return_type->get_index() : 0},
                 {"name", ""},
             };
         }
@@ -1958,6 +1981,10 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
 
         field_entry = {
             {"id", i},
+            {"declaring_typeid", type_id},
+            {"typeid", field_type},
+            {"flags_raw", field_flags},
+            {"init_data_offset_raw", init_data_offset},
             {"type", field_type_name},
             {"offset_from_base", (std::stringstream{} << "0x" << std::hex << pf->offset_from_base).str()},
             {"offset_from_fieldptr", (std::stringstream{} << "0x" << std::hex << pf->offset_from_fieldptr).str()},
@@ -1997,6 +2024,7 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
             }
 
             if (init_data == nullptr) {
+                field_entry["default_error"] = "initial-data offset outside the TDB pools";
                 // Offset out of range — likely a garbage read from a mis-dispatched
                 // bitfield. Skip the default-value extraction for this field.
                 continue;
@@ -2065,10 +2093,28 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
                 cs->integer(*(int64_t*)init_data);
                 break;
             case "System.Single"_fnv:
+                if (signed_offset < 0 || uint64_t{init_data_offset} + sizeof(float) > byte_pool_size) {
+                    field_entry["default_error"] = "float literal exceeds byte pool";
+                    break;
+                }
+                if (!std::isfinite(*(float*)init_data)) {
+                    uint32_t bits{};
+                    std::memcpy(&bits, init_data, sizeof(bits));
+                    field_entry["default_ieee754_bits"] = (std::stringstream{} << "0x" << std::hex << bits).str();
+                }
                 field_entry["default"] = *(float*)init_data;
                 cs->real(*(float*)init_data);
                 break;
             case "System.Double"_fnv:
+                if (signed_offset < 0 || uint64_t{init_data_offset} + sizeof(double) > byte_pool_size) {
+                    field_entry["default_error"] = "double literal exceeds byte pool";
+                    break;
+                }
+                if (!std::isfinite(*(double*)init_data)) {
+                    uint64_t bits{};
+                    std::memcpy(&bits, init_data, sizeof(bits));
+                    field_entry["default_ieee754_bits"] = (std::stringstream{} << "0x" << std::hex << bits).str();
+                }
                 field_entry["default"] = *(double*)init_data;
                 cs->real(*(double*)init_data);
                 break;
@@ -2155,6 +2201,8 @@ void ObjectExplorer::generate_sdk(const bool skip_sdkgenny) {
 
         type_entry["properties"][pp->name] = {
             {"id", i},
+            {"getter_id", getter_id},
+            {"setter_id", setter_id},
             {"getter", getter_name},
             {"setter", setter_name},
         };
